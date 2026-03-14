@@ -67,14 +67,10 @@
             SCALE = Math.min(scaleX, scaleY);
 
             // Recalculate game constants based on scale
-            GRAVITY = 0.32 * SCALE;
-            FLAP_STRENGTH = -5.8 * SCALE;
             PIPE_WIDTH = 60 * SCALE;
-            PIPE_GAP = 150 * SCALE;
-            PIPE_SPEED = 2.5 * SCALE;
-            PIPE_SPAWN_INTERVAL = 1800;
             BIRD_SIZE = 28 * SCALE;
             GROUND_HEIGHT = 100 * SCALE;
+            applyDifficulty();
 
             // Regenerate landscape elements
             initTrees();
@@ -112,12 +108,58 @@
             }
         }
 
+        // Difficulty system (1-5, default 4)
+        let difficulty = parseInt(localStorage.getItem('floppyDifficulty')) || 4;
+        const DIFFICULTY_SETTINGS = {
+            1: { gravity: 0.22, flap: -4.8, gap: 190, speed: 1.8, spawn: 2400, label: 'Very Easy' },
+            2: { gravity: 0.26, flap: -5.2, gap: 175, speed: 2.1, spawn: 2100, label: 'Easy' },
+            3: { gravity: 0.29, flap: -5.5, gap: 162, speed: 2.3, spawn: 1950, label: 'Medium' },
+            4: { gravity: 0.32, flap: -5.8, gap: 150, speed: 2.5, spawn: 1800, label: 'Hard' },
+            5: { gravity: 0.38, flap: -6.5, gap: 130, speed: 3.0, spawn: 1500, label: 'Insane' },
+        };
+
+        // Hit areas for difficulty arrows (set during draw)
+        let diffArrowLeft = { x: 0, y: 0, w: 0, h: 0 };
+        let diffArrowRight = { x: 0, y: 0, w: 0, h: 0 };
+
+        function applyDifficulty() {
+            const s = DIFFICULTY_SETTINGS[difficulty];
+            GRAVITY = s.gravity * SCALE;
+            FLAP_STRENGTH = s.flap * SCALE;
+            PIPE_GAP = s.gap * SCALE;
+            PIPE_SPEED = s.speed * SCALE;
+            PIPE_SPAWN_INTERVAL = s.spawn;
+        }
+
+        function changeDifficulty(delta) {
+            difficulty = Math.max(1, Math.min(5, difficulty + delta));
+            localStorage.setItem('floppyDifficulty', difficulty);
+            bestScore = bestScores[difficulty] || 0;
+            applyDifficulty();
+        }
+
         // Game state
         let gameState = 'menu';
-        let bird, pipes, score, bestScore, lastPipeSpawn, groundOffset, frameCount;
+        let bird, pipes, score, lastPipeSpawn, groundOffset, frameCount;
+        let gameStartTime = 0;
+        let gameDuration = 0;
 
-        // Load best score
-        bestScore = parseInt(localStorage.getItem('flappyBestScore')) || 0;
+        // Load best scores per difficulty level
+        let bestScores = {};
+        try {
+            bestScores = JSON.parse(localStorage.getItem('floppyBestScores')) || {};
+        } catch(e) { bestScores = {}; }
+        // Ensure all levels have a value
+        for (let i = 1; i <= 5; i++) {
+            if (!bestScores[i]) bestScores[i] = 0;
+        }
+        // Migrate old single best score if it exists
+        const oldBest = parseInt(localStorage.getItem('flappyBestScore')) || 0;
+        if (oldBest > 0 && bestScores[4] === 0) {
+            bestScores[4] = oldBest;
+            localStorage.setItem('floppyBestScores', JSON.stringify(bestScores));
+        }
+        let bestScore = bestScores[difficulty] || 0;
 
         // Flagstaff Arizona Colors
         const COLORS = {
@@ -195,6 +237,7 @@
             if (gameState === 'menu') {
                 gameState = 'playing';
                 resetGame();
+                gameStartTime = Date.now();
                 bird.velocity = FLAP_STRENGTH;
                 bird.flapFrame = 1;
                 bird.flapTimer = 8;
@@ -210,17 +253,65 @@
             }
         }
 
+        // Helper: check if point is inside a rect
+        function pointInRect(px, py, rect) {
+            return px >= rect.x && px <= rect.x + rect.w && py >= rect.y && py <= rect.y + rect.h;
+        }
+
+        // Handle click/tap with difficulty arrow detection
+        function handleClick(clientX, clientY) {
+            // Convert to canvas coordinates
+            const rect = canvas.getBoundingClientRect();
+            const scaleFactorX = canvas.width / rect.width;
+            const scaleFactorY = canvas.height / rect.height;
+            const cx = (clientX - rect.left) * scaleFactorX;
+            const cy = (clientY - rect.top) * scaleFactorY;
+
+            if (gameState === 'menu') {
+                // Check difficulty arrows first
+                if (pointInRect(cx, cy, diffArrowLeft)) {
+                    changeDifficulty(-1);
+                    return; // Don't start game
+                }
+                if (pointInRect(cx, cy, diffArrowRight)) {
+                    changeDifficulty(1);
+                    return; // Don't start game
+                }
+            }
+            flap();
+        }
+
         // Input handling
         document.addEventListener('keydown', (e) => {
+            if (e.code === 'Escape') {
+                e.preventDefault();
+                if (gameState === 'playing' || gameState === 'gameover') {
+                    gameState = 'menu';
+                }
+                return;
+            }
             if (e.code === 'Space' || e.code === 'ArrowUp') {
                 e.preventDefault();
                 flap();
             }
+            if (gameState === 'menu') {
+                if (e.code === 'ArrowLeft') {
+                    e.preventDefault();
+                    changeDifficulty(-1);
+                }
+                if (e.code === 'ArrowRight') {
+                    e.preventDefault();
+                    changeDifficulty(1);
+                }
+            }
         });
-        canvas.addEventListener('click', flap);
+        canvas.addEventListener('click', (e) => {
+            handleClick(e.clientX, e.clientY);
+        });
         canvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
-            flap();
+            const touch = e.touches[0];
+            handleClick(touch.clientX, touch.clientY);
         });
 
         function spawnPipe() {
@@ -228,20 +319,31 @@
             const minY = 80 * SCALE;
             const maxY = groundY - PIPE_GAP - 60 * SCALE;
             const topHeight = minY + Math.random() * (maxY - minY);
-            // Generate random jagged edges for stalactite/stalagmite
-            const jaggedTop = [];
-            const jaggedBottom = [];
-            const segments = 8;
-            for (let i = 0; i <= segments; i++) {
-                jaggedTop.push((Math.random() - 0.5) * PIPE_WIDTH * 0.4);
-                jaggedBottom.push((Math.random() - 0.5) * PIPE_WIDTH * 0.4);
+            // Generate decorations for tree trunks
+            const topBranches = [];
+            const botBranches = [];
+            const numTopBranches = 1 + Math.floor(Math.random() * 3);
+            const numBotBranches = 1 + Math.floor(Math.random() * 3);
+            for (let i = 0; i < numTopBranches; i++) {
+                topBranches.push({ y: 0.15 + Math.random() * 0.7, side: Math.random() > 0.5 ? 1 : -1, len: 0.3 + Math.random() * 0.4 });
             }
+            for (let i = 0; i < numBotBranches; i++) {
+                botBranches.push({ y: 0.15 + Math.random() * 0.7, side: Math.random() > 0.5 ? 1 : -1, len: 0.3 + Math.random() * 0.4 });
+            }
+            // Knothole and owl placement
+            const hasTopHole = Math.random() > 0.4;
+            const hasBotHole = Math.random() > 0.4;
+            const topHoleY = 0.3 + Math.random() * 0.4;
+            const botHoleY = 0.3 + Math.random() * 0.4;
+            const hasOwl = Math.random() > 0.5;
+            const owlOnTop = Math.random() > 0.5;
+            const owlInHole = hasOwl && ((owlOnTop && hasTopHole) || (!owlOnTop && hasBotHole));
+            const owlOnBranch = hasOwl && !owlInHole;
             pipes.push({
-                x: CANVAS_WIDTH,
-                topHeight: topHeight,
-                scored: false,
-                jaggedTop: jaggedTop,
-                jaggedBottom: jaggedBottom
+                x: CANVAS_WIDTH, topHeight, scored: false,
+                topBranches, botBranches,
+                hasTopHole, hasBotHole, topHoleY, botHoleY,
+                hasOwl, owlOnTop, owlInHole, owlOnBranch
             });
         }
 
@@ -339,10 +441,18 @@
         function gameOver() {
             gameState = 'gameover';
             frameCount = 0;
+            gameDuration = Math.round((Date.now() - gameStartTime) / 1000);
             if (score > bestScore) {
                 bestScore = score;
-                localStorage.setItem('flappyBestScore', bestScore);
+                bestScores[difficulty] = score;
+                localStorage.setItem('floppyBestScores', JSON.stringify(bestScores));
             }
+        }
+
+        function formatDuration(sec) {
+            const m = Math.floor(sec / 60);
+            const s = sec % 60;
+            return m > 0 ? `${m}m ${s}s` : `${s}s`;
         }
 
         // ========== DRAWING FUNCTIONS ==========
@@ -572,149 +682,242 @@
             ctx.fillRect(0, groundY + 30 * SCALE, CANVAS_WIDTH, 8 * SCALE);
         }
 
-        function drawStalactite(x, topHeight, jagged) {
+        function drawTrunkSection(x, y1, y2, w) {
+            const h = y2 - y1;
+            if (h <= 0) return;
+            // Base bark color
+            const grad = ctx.createLinearGradient(x, 0, x + w, 0);
+            grad.addColorStop(0, '#3a2818');
+            grad.addColorStop(0.15, '#5a3f28');
+            grad.addColorStop(0.35, '#6b4c30');
+            grad.addColorStop(0.5, '#5a3f28');
+            grad.addColorStop(0.65, '#6b4c30');
+            grad.addColorStop(0.85, '#5a3f28');
+            grad.addColorStop(1, '#3a2818');
+            ctx.fillStyle = grad;
+            ctx.fillRect(x, y1, w, h);
+
+            // Vertical bark ridges (dark grooves)
+            const ridgeSpacing = 8 * SCALE;
+            ctx.strokeStyle = 'rgba(25, 15, 5, 0.25)';
+            ctx.lineWidth = 1.5 * SCALE;
+            for (let rx = x + ridgeSpacing; rx < x + w - 2 * SCALE; rx += ridgeSpacing) {
+                const wobble = Math.sin(rx * 0.5) * 2 * SCALE;
+                ctx.beginPath();
+                ctx.moveTo(rx + wobble, y1);
+                ctx.lineTo(rx - wobble, y2);
+                ctx.stroke();
+            }
+
+            // Lighter vertical bark highlights
+            ctx.strokeStyle = 'rgba(130, 100, 70, 0.12)';
+            ctx.lineWidth = 2 * SCALE;
+            for (let rx = x + ridgeSpacing * 0.5; rx < x + w; rx += ridgeSpacing) {
+                const wobble = Math.sin(rx * 0.7 + 1) * 1.5 * SCALE;
+                ctx.beginPath();
+                ctx.moveTo(rx + wobble, y1);
+                ctx.lineTo(rx - wobble, y2);
+                ctx.stroke();
+            }
+
+            // Subtle horizontal ring marks (less prominent)
+            ctx.strokeStyle = 'rgba(30, 20, 10, 0.08)';
+            ctx.lineWidth = 1 * SCALE;
+            for (let ly = y1 + 25 * SCALE; ly < y2; ly += 30 * SCALE) {
+                ctx.beginPath();
+                ctx.moveTo(x + 2 * SCALE, ly);
+                ctx.lineTo(x + w - 2 * SCALE, ly + 1 * SCALE);
+                ctx.stroke();
+            }
+
+            // Center highlight strip
+            ctx.fillStyle = 'rgba(140, 110, 70, 0.1)';
+            ctx.fillRect(x + w * 0.35, y1, w * 0.12, h);
+
+            // Dark edges for depth
+            ctx.fillStyle = 'rgba(20, 10, 0, 0.15)';
+            ctx.fillRect(x, y1, 3 * SCALE, h);
+            ctx.fillRect(x + w - 3 * SCALE, y1, 3 * SCALE, h);
+        }
+
+        function drawBranch(trunkX, by, side, len, trunkW) {
+            const bLen = trunkW * len * 1.5;
+            const bW = 5 * SCALE;
+            // Branch originates from the edge of the trunk (centered on trunkX + trunkW/2)
+            const trunkCenter = trunkX + trunkW / 2;
+            const bx = side > 0 ? trunkCenter + trunkW * 0.3 : trunkCenter - trunkW * 0.3;
+            ctx.fillStyle = '#4a3020';
+            ctx.beginPath();
+            ctx.moveTo(bx, by - bW / 2);
+            ctx.lineTo(bx + side * bLen, by - bW * 0.3 - 2 * SCALE);
+            ctx.lineTo(bx + side * bLen * 0.95, by + bW * 0.3);
+            ctx.lineTo(bx, by + bW / 2);
+            ctx.closePath();
+            ctx.fill();
+            // Branch bark detail
+            ctx.strokeStyle = 'rgba(25, 15, 5, 0.2)';
+            ctx.lineWidth = 1 * SCALE;
+            ctx.beginPath();
+            ctx.moveTo(bx, by);
+            ctx.lineTo(bx + side * bLen * 0.8, by - 1 * SCALE);
+            ctx.stroke();
+            // Small leaf clusters at tip
+            ctx.fillStyle = '#3a5f2a';
+            ctx.beginPath();
+            ctx.arc(bx + side * bLen, by - 1 * SCALE, 5 * SCALE, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#2d4a1e';
+            ctx.beginPath();
+            ctx.arc(bx + side * bLen * 0.85, by + 2 * SCALE, 3 * SCALE, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawKnothole(cx, hy, trunkW) {
+            ctx.fillStyle = '#1a1008';
+            ctx.beginPath();
+            ctx.ellipse(cx + trunkW * 0.5, hy, 7 * SCALE, 5 * SCALE, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#2a1a0a';
+            ctx.beginPath();
+            ctx.ellipse(cx + trunkW * 0.5, hy, 5 * SCALE, 3.5 * SCALE, 0, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawOwl(ox, oy, size) {
+            const s = size * SCALE;
+            // Body
+            ctx.fillStyle = '#8b7355';
+            ctx.beginPath();
+            ctx.ellipse(ox, oy, s * 0.6, s * 0.8, 0, 0, Math.PI * 2);
+            ctx.fill();
+            // Head
+            ctx.fillStyle = '#9b8365';
+            ctx.beginPath();
+            ctx.arc(ox, oy - s * 0.6, s * 0.5, 0, Math.PI * 2);
+            ctx.fill();
+            // Ear tufts
+            ctx.fillStyle = '#7a6345';
+            ctx.beginPath();
+            ctx.moveTo(ox - s * 0.3, oy - s * 0.9);
+            ctx.lineTo(ox - s * 0.15, oy - s * 1.2);
+            ctx.lineTo(ox - s * 0.05, oy - s * 0.85);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.moveTo(ox + s * 0.3, oy - s * 0.9);
+            ctx.lineTo(ox + s * 0.15, oy - s * 1.2);
+            ctx.lineTo(ox + s * 0.05, oy - s * 0.85);
+            ctx.fill();
+            // Eyes
+            ctx.fillStyle = '#ffee88';
+            ctx.beginPath();
+            ctx.arc(ox - s * 0.18, oy - s * 0.65, s * 0.18, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(ox + s * 0.18, oy - s * 0.65, s * 0.18, 0, Math.PI * 2);
+            ctx.fill();
+            // Pupils
+            ctx.fillStyle = '#111';
+            ctx.beginPath();
+            ctx.arc(ox - s * 0.18, oy - s * 0.65, s * 0.08, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(ox + s * 0.18, oy - s * 0.65, s * 0.08, 0, Math.PI * 2);
+            ctx.fill();
+            // Beak
+            ctx.fillStyle = '#c8960a';
+            ctx.beginPath();
+            ctx.moveTo(ox, oy - s * 0.5);
+            ctx.lineTo(ox - s * 0.08, oy - s * 0.35);
+            ctx.lineTo(ox + s * 0.08, oy - s * 0.35);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function drawTreeTrunkObstacle(pipe) {
+            const x = pipe.x;
+            const topHeight = pipe.topHeight;
             const groundY = CANVAS_HEIGHT - GROUND_HEIGHT;
-            const segments = jagged ? jagged.length - 1 : 8;
-
-            // ====== TOP STALACTITE (hanging from ceiling) ======
-            // Main body
-            const topGrad = ctx.createLinearGradient(x, 0, x + PIPE_WIDTH, 0);
-            topGrad.addColorStop(0, COLORS.stalactiteDark);
-            topGrad.addColorStop(0.3, COLORS.stalactiteMid);
-            topGrad.addColorStop(0.5, COLORS.stalactiteLight);
-            topGrad.addColorStop(0.7, COLORS.stalactiteMid);
-            topGrad.addColorStop(1, COLORS.stalactiteDark);
-
-            // Draw stalactite body with jagged edges
-            ctx.fillStyle = topGrad;
-            ctx.beginPath();
-            ctx.moveTo(x - 5 * SCALE, 0);
-            ctx.lineTo(x + PIPE_WIDTH + 5 * SCALE, 0);
-
-            // Right jagged edge going down
-            if (jagged) {
-                for (let i = 0; i <= segments; i++) {
-                    const frac = i / segments;
-                    const py = topHeight * frac;
-                    const edgeOffset = jagged[i] * 0.5;
-                    ctx.lineTo(x + PIPE_WIDTH + edgeOffset, py);
-                }
-            }
-
-            // Pointed tip
-            ctx.lineTo(x + PIPE_WIDTH * 0.55, topHeight);
-            ctx.lineTo(x + PIPE_WIDTH * 0.45, topHeight - 3 * SCALE);
-            ctx.lineTo(x + PIPE_WIDTH * 0.35, topHeight + 5 * SCALE);
-
-            // Left jagged edge going up
-            if (jagged) {
-                for (let i = segments; i >= 0; i--) {
-                    const frac = i / segments;
-                    const py = topHeight * frac;
-                    const edgeOffset = jagged[i] * 0.5;
-                    ctx.lineTo(x + edgeOffset, py);
-                }
-            }
-
-            ctx.closePath();
-            ctx.fill();
-
-            // Stalactite details - drip lines
-            ctx.strokeStyle = 'rgba(90, 80, 64, 0.3)';
-            ctx.lineWidth = 1 * SCALE;
-            for (let i = 0; i < 3; i++) {
-                const lx = x + PIPE_WIDTH * (0.25 + i * 0.25);
-                ctx.beginPath();
-                ctx.moveTo(lx, 0);
-                ctx.lineTo(lx + (Math.random() - 0.5) * 3 * SCALE, topHeight * 0.7);
-                ctx.stroke();
-            }
-
-            // Highlight edge
-            ctx.strokeStyle = 'rgba(180, 170, 150, 0.3)';
-            ctx.lineWidth = 2 * SCALE;
-            ctx.beginPath();
-            ctx.moveTo(x + PIPE_WIDTH * 0.35, 0);
-            ctx.lineTo(x + PIPE_WIDTH * 0.4, topHeight * 0.6);
-            ctx.stroke();
-
-            // Small drip at tip
-            ctx.fillStyle = 'rgba(140, 180, 200, 0.4)';
-            ctx.beginPath();
-            ctx.ellipse(x + PIPE_WIDTH * 0.45, topHeight + 3 * SCALE, 2 * SCALE, 3 * SCALE, 0, 0, Math.PI * 2);
-            ctx.fill();
-
-            // ====== BOTTOM STALAGMITE (rising from ground) ======
             const bottomY = topHeight + PIPE_GAP;
-            const stalagHeight = groundY - bottomY;
+            const trunkW = PIPE_WIDTH;
+            const cx = x;
 
-            const botGrad = ctx.createLinearGradient(x, 0, x + PIPE_WIDTH, 0);
-            botGrad.addColorStop(0, COLORS.stalactiteDark);
-            botGrad.addColorStop(0.3, COLORS.stalactiteMid);
-            botGrad.addColorStop(0.5, COLORS.stalactiteLight);
-            botGrad.addColorStop(0.7, COLORS.stalactiteMid);
-            botGrad.addColorStop(1, COLORS.stalactiteDark);
-
-            ctx.fillStyle = botGrad;
+            // ====== TOP TRUNK (from ceiling down) ======
+            drawTrunkSection(x, 0, topHeight, trunkW);
+            // Broken end at bottom of top trunk
+            ctx.fillStyle = '#5a4030';
             ctx.beginPath();
-
-            // Pointed tip at top
-            const jaggedBot = jagged || [];
-            ctx.moveTo(x + PIPE_WIDTH * 0.4, bottomY - 5 * SCALE);
-            ctx.lineTo(x + PIPE_WIDTH * 0.5, bottomY);
-            ctx.lineTo(x + PIPE_WIDTH * 0.6, bottomY - 3 * SCALE);
-
-            // Right jagged edge going down
-            for (let i = 0; i <= segments; i++) {
-                const frac = i / segments;
-                const py = bottomY + stalagHeight * frac;
-                const edgeOffset = (jaggedBot[i] || 0) * 0.5;
-                ctx.lineTo(x + PIPE_WIDTH + edgeOffset, py);
-            }
-
-            ctx.lineTo(x + PIPE_WIDTH + 5 * SCALE, groundY);
-            ctx.lineTo(x - 5 * SCALE, groundY);
-
-            // Left jagged edge going up
-            for (let i = segments; i >= 0; i--) {
-                const frac = i / segments;
-                const py = bottomY + stalagHeight * frac;
-                const edgeOffset = (jaggedBot[i] || 0) * 0.5;
-                ctx.lineTo(x + edgeOffset, py);
-            }
-
+            ctx.moveTo(x, topHeight);
+            ctx.lineTo(x + trunkW * 0.2, topHeight + 4 * SCALE);
+            ctx.lineTo(x + trunkW * 0.5, topHeight - 2 * SCALE);
+            ctx.lineTo(x + trunkW * 0.8, topHeight + 3 * SCALE);
+            ctx.lineTo(x + trunkW, topHeight);
+            ctx.lineTo(x + trunkW, topHeight - 6 * SCALE);
+            ctx.lineTo(x, topHeight - 6 * SCALE);
             ctx.closePath();
             ctx.fill();
 
-            // Stalagmite details - mineral streaks
-            ctx.strokeStyle = 'rgba(90, 80, 64, 0.3)';
-            ctx.lineWidth = 1 * SCALE;
-            for (let i = 0; i < 3; i++) {
-                const lx = x + PIPE_WIDTH * (0.25 + i * 0.25);
-                ctx.beginPath();
-                ctx.moveTo(lx + (Math.random() - 0.5) * 3 * SCALE, bottomY + stalagHeight * 0.2);
-                ctx.lineTo(lx, groundY);
-                ctx.stroke();
+            // Top branches
+            if (pipe.topBranches) {
+                for (const b of pipe.topBranches) {
+                    const by = topHeight * b.y;
+                    drawBranch(x, by, b.side, b.len, trunkW);
+                }
+            }
+            // Top knothole
+            if (pipe.hasTopHole) {
+                drawKnothole(x, topHeight * pipe.topHoleY, trunkW);
             }
 
-            // Highlight edge
-            ctx.strokeStyle = 'rgba(180, 170, 150, 0.3)';
-            ctx.lineWidth = 2 * SCALE;
+            // ====== BOTTOM TRUNK (from gap down to ground) ======
+            drawTrunkSection(x, bottomY, groundY, trunkW);
+            // Broken end at top of bottom trunk
+            ctx.fillStyle = '#5a4030';
             ctx.beginPath();
-            ctx.moveTo(x + PIPE_WIDTH * 0.35, bottomY + stalagHeight * 0.3);
-            ctx.lineTo(x + PIPE_WIDTH * 0.35, groundY);
-            ctx.stroke();
+            ctx.moveTo(x, bottomY);
+            ctx.lineTo(x + trunkW * 0.15, bottomY - 3 * SCALE);
+            ctx.lineTo(x + trunkW * 0.45, bottomY + 2 * SCALE);
+            ctx.lineTo(x + trunkW * 0.7, bottomY - 4 * SCALE);
+            ctx.lineTo(x + trunkW, bottomY);
+            ctx.lineTo(x + trunkW, bottomY + 6 * SCALE);
+            ctx.lineTo(x, bottomY + 6 * SCALE);
+            ctx.closePath();
+            ctx.fill();
 
-            // Small rocks at base
-            ctx.fillStyle = COLORS.rockBrown;
-            ctx.globalAlpha = 0.4;
-            ctx.beginPath();
-            ctx.ellipse(x - 3 * SCALE, groundY - 2 * SCALE, 6 * SCALE, 3 * SCALE, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.beginPath();
-            ctx.ellipse(x + PIPE_WIDTH + 2 * SCALE, groundY - 1 * SCALE, 5 * SCALE, 2.5 * SCALE, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.globalAlpha = 1;
+            // Bottom branches
+            if (pipe.botBranches) {
+                for (const b of pipe.botBranches) {
+                    const botH = groundY - bottomY;
+                    const by = bottomY + botH * b.y;
+                    drawBranch(x, by, b.side, b.len, trunkW);
+                }
+            }
+            // Bottom knothole
+            if (pipe.hasBotHole) {
+                const botH = groundY - bottomY;
+                drawKnothole(x, bottomY + botH * pipe.botHoleY, trunkW);
+            }
+
+            // Owl
+            if (pipe.hasOwl) {
+                if (pipe.owlInHole) {
+                    // Owl peeking from hole
+                    const isTop = pipe.owlOnTop;
+                    const holeY = isTop ? topHeight * pipe.topHoleY : bottomY + (groundY - bottomY) * pipe.botHoleY;
+                    drawOwl(x + trunkW * 0.5, holeY - 2 * SCALE, 5);
+                } else if (pipe.owlOnBranch) {
+                    // Owl sitting on a branch
+                    const isTop = pipe.owlOnTop;
+                    const branches = isTop ? pipe.topBranches : pipe.botBranches;
+                    if (branches && branches.length > 0) {
+                        const b = branches[0];
+                        const baseH = isTop ? topHeight : (groundY - bottomY);
+                        const by = isTop ? baseH * b.y : bottomY + baseH * b.y;
+                        const bLen = trunkW * b.len * 1.5;
+                        const ox = (b.side > 0 ? x + trunkW / 2 : x - trunkW / 2) + b.side * bLen * 0.6;
+                        drawOwl(ox, by - 8 * SCALE, 5);
+                    }
+                }
+            }
         }
 
         function drawBird(x, y, rotation, flapFrame) {
@@ -742,6 +945,7 @@
         function drawScore() {
             if (gameState === 'playing') {
                 ctx.save();
+                // Main score at top
                 const fontSize = Math.round(48 * SCALE);
                 ctx.font = `bold ${fontSize}px Arial`;
                 ctx.textAlign = 'center';
@@ -750,6 +954,22 @@
                 ctx.fillStyle = COLORS.textWhite;
                 ctx.strokeText(score, CANVAS_WIDTH / 2, 60 * SCALE);
                 ctx.fillText(score, CANVAS_WIDTH / 2, 60 * SCALE);
+
+                // Difficulty & best score at bottom
+                const groundY = CANVAS_HEIGHT - GROUND_HEIGHT;
+                const infoSize = Math.round(13 * SCALE);
+                ctx.font = `bold ${infoSize}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.globalAlpha = 0.6;
+                ctx.lineWidth = 2 * SCALE;
+                const diffLabel = DIFFICULTY_SETTINGS[difficulty].label;
+                const infoText = `Lvl ${difficulty} (${diffLabel})  |  Best: ${bestScore}`;
+                ctx.strokeStyle = COLORS.textShadow;
+                ctx.strokeText(infoText, CANVAS_WIDTH / 2, groundY - 8 * SCALE);
+                ctx.fillStyle = COLORS.textWhite;
+                ctx.fillText(infoText, CANVAS_WIDTH / 2, groundY - 8 * SCALE);
+                ctx.globalAlpha = 1;
+
                 ctx.restore();
             }
         }
@@ -788,14 +1008,98 @@
             ctx.fillText('Click or Press Space', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 80 * SCALE);
             ctx.globalAlpha = 1;
 
-            if (bestScore > 0) {
-                const bestSize = Math.round(18 * SCALE);
-                ctx.font = `bold ${bestSize}px Arial`;
-                ctx.fillStyle = COLORS.textWhite;
+            // === Difficulty selector ===
+            const diffY = CANVAS_HEIGHT / 2 + 115 * SCALE;
+            const diffFontSize = Math.round(18 * SCALE);
+            const arrowSize = Math.round(28 * SCALE);
+            const btnW = 44 * SCALE;
+            const btnH = 38 * SCALE;
+
+            // Difficulty label text
+            ctx.font = `bold ${diffFontSize}px Arial`;
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.strokeStyle = COLORS.textShadow;
+            ctx.lineWidth = 2 * SCALE;
+            ctx.textAlign = 'center';
+            const diffLabel = DIFFICULTY_SETTINGS[difficulty].label;
+            const diffText = `Difficulty: ${difficulty} - ${diffLabel}`;
+            ctx.strokeText(diffText, CANVAS_WIDTH / 2, diffY);
+            ctx.fillText(diffText, CANVAS_WIDTH / 2, diffY);
+
+            // Measure text width to position arrows beside it
+            const textWidth = ctx.measureText(diffText).width;
+            const arrowGap = 12 * SCALE; // gap between text edge and arrow button
+
+            // Left arrow button  ◀  (same vertical line as text)
+            const leftBtnX = CANVAS_WIDTH / 2 - textWidth / 2 - arrowGap - btnW;
+            const leftBtnY = diffY - btnH * 0.75;
+            ctx.fillStyle = difficulty > 1 ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.07)';
+            ctx.beginPath();
+            ctx.roundRect(leftBtnX, leftBtnY, btnW, btnH, 6 * SCALE);
+            ctx.fill();
+            ctx.font = `bold ${arrowSize}px Arial`;
+            ctx.fillStyle = difficulty > 1 ? '#ffffff' : 'rgba(255,255,255,0.3)';
+            ctx.textAlign = 'center';
+            ctx.fillText('◀', leftBtnX + btnW / 2, leftBtnY + btnH * 0.72);
+            diffArrowLeft = { x: leftBtnX, y: leftBtnY, w: btnW, h: btnH };
+
+            // Right arrow button  ▶  (same vertical line as text)
+            const rightBtnX = CANVAS_WIDTH / 2 + textWidth / 2 + arrowGap;
+            const rightBtnY = diffY - btnH * 0.75;
+            ctx.fillStyle = difficulty < 5 ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.07)';
+            ctx.beginPath();
+            ctx.roundRect(rightBtnX, rightBtnY, btnW, btnH, 6 * SCALE);
+            ctx.fill();
+            ctx.font = `bold ${arrowSize}px Arial`;
+            ctx.fillStyle = difficulty < 5 ? '#ffffff' : 'rgba(255,255,255,0.3)';
+            ctx.textAlign = 'center';
+            ctx.fillText('▶', rightBtnX + btnW / 2, rightBtnY + btnH * 0.72);
+            diffArrowRight = { x: rightBtnX, y: rightBtnY, w: btnW, h: btnH };
+
+            // === Best Scores per difficulty ===
+            const scoreboardY = rightBtnY + btnH + 24 * SCALE;
+            const sbFontSize = Math.round(16 * SCALE);
+            const lineH = 22 * SCALE;
+            const headerSize = Math.round(17 * SCALE);
+            ctx.font = `bold ${headerSize}px Arial`;
+            ctx.fillStyle = 'rgba(255,255,255,0.75)';
+            ctx.strokeStyle = COLORS.textShadow;
+            ctx.lineWidth = 3 * SCALE;
+            ctx.textAlign = 'center';
+            ctx.strokeText('— Best Scores —', CANVAS_WIDTH / 2, scoreboardY);
+            ctx.fillText('— Best Scores —', CANVAS_WIDTH / 2, scoreboardY);
+
+            for (let lvl = 5; lvl >= 1; lvl--) {
+                const sy = scoreboardY + lineH * (6 - lvl);
+                const lbl = DIFFICULTY_SETTINGS[lvl].label;
+                const sc = bestScores[lvl] || 0;
+                const isCurrent = lvl === difficulty;
+
+                // Use bold for current level, regular bold for others
+                ctx.font = isCurrent ? `bold ${sbFontSize}px Arial` : `bold ${sbFontSize}px Arial`;
                 ctx.strokeStyle = COLORS.textShadow;
-                ctx.lineWidth = 3 * SCALE;
-                ctx.strokeText(`Best: ${bestScore}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 120 * SCALE);
-                ctx.fillText(`Best: ${bestScore}`, CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 120 * SCALE);
+                ctx.lineWidth = 2 * SCALE;
+
+                // Level name on the left
+                ctx.textAlign = 'left';
+                const colX = CANVAS_WIDTH / 2 - 100 * SCALE;
+                const labelText = `${lvl}. ${lbl}`;
+                ctx.fillStyle = isCurrent ? '#fffde0' : 'rgba(255,255,255,0.55)';
+                ctx.strokeText(labelText, colX, sy);
+                ctx.fillText(labelText, colX, sy);
+
+                // Score on the right
+                ctx.textAlign = 'right';
+                const scoreText = sc > 0 ? String(sc) : '-';
+                ctx.fillStyle = isCurrent ? '#fffde0' : 'rgba(255,255,255,0.55)';
+                ctx.strokeText(scoreText, CANVAS_WIDTH / 2 + 100 * SCALE, sy);
+                ctx.fillText(scoreText, CANVAS_WIDTH / 2 + 100 * SCALE, sy);
+
+                // Highlight bar behind current level
+                if (isCurrent) {
+                    ctx.fillStyle = 'rgba(255, 255, 200, 0.08)';
+                    ctx.fillRect(colX - 5 * SCALE, sy - lineH * 0.7, 210 * SCALE, lineH);
+                }
             }
 
             ctx.restore();
@@ -803,103 +1107,108 @@
 
         function drawGameOver() {
             ctx.save();
-
             const groundY = CANVAS_HEIGHT - GROUND_HEIGHT;
-
             ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
             ctx.fillRect(0, 0, CANVAS_WIDTH, groundY);
 
             const panelW = 320 * SCALE;
-            const panelH = 220 * SCALE;
+            const panelH = 350 * SCALE;
             const panelX = (CANVAS_WIDTH - panelW) / 2;
-            const panelY = CANVAS_HEIGHT * 0.23;
+            const panelY = CANVAS_HEIGHT * 0.12;
 
-            // Panel shadow
+            // Panel shadow + bg
             ctx.fillStyle = 'rgba(0,0,0,0.3)';
-            ctx.beginPath();
-            ctx.roundRect(panelX + 4 * SCALE, panelY + 4 * SCALE, panelW, panelH, 12 * SCALE);
-            ctx.fill();
-
-            // Panel bg - earthy tones
+            ctx.beginPath(); ctx.roundRect(panelX + 4 * SCALE, panelY + 4 * SCALE, panelW, panelH, 12 * SCALE); ctx.fill();
             ctx.fillStyle = '#b5886a';
-            ctx.beginPath();
-            ctx.roundRect(panelX, panelY, panelW, panelH, 12 * SCALE);
-            ctx.fill();
-
+            ctx.beginPath(); ctx.roundRect(panelX, panelY, panelW, panelH, 12 * SCALE); ctx.fill();
             ctx.fillStyle = '#8b6548';
-            ctx.beginPath();
-            ctx.roundRect(panelX + 8 * SCALE, panelY + 8 * SCALE, panelW - 16 * SCALE, panelH - 16 * SCALE, 8 * SCALE);
-            ctx.fill();
-
+            ctx.beginPath(); ctx.roundRect(panelX + 8 * SCALE, panelY + 8 * SCALE, panelW - 16 * SCALE, panelH - 16 * SCALE, 8 * SCALE); ctx.fill();
             ctx.fillStyle = '#c9a07a';
-            ctx.beginPath();
-            ctx.roundRect(panelX + 12 * SCALE, panelY + 12 * SCALE, panelW - 24 * SCALE, panelH - 24 * SCALE, 6 * SCALE);
-            ctx.fill();
+            ctx.beginPath(); ctx.roundRect(panelX + 12 * SCALE, panelY + 12 * SCALE, panelW - 24 * SCALE, panelH - 24 * SCALE, 6 * SCALE); ctx.fill();
 
-            // Game Over text
-            const goSize = Math.round(42 * SCALE);
+            // Game Over title
+            const goSize = Math.round(38 * SCALE);
             ctx.font = `bold ${goSize}px Arial`;
             ctx.textAlign = 'center';
             ctx.lineWidth = 4 * SCALE;
             ctx.strokeStyle = COLORS.textShadow;
             ctx.fillStyle = '#c0392b';
-            ctx.strokeText('Game Over', CANVAS_WIDTH / 2, panelY - 15 * SCALE);
-            ctx.fillText('Game Over', CANVAS_WIDTH / 2, panelY - 15 * SCALE);
+            ctx.strokeText('Game Over', CANVAS_WIDTH / 2, panelY - 12 * SCALE);
+            ctx.fillText('Game Over', CANVAS_WIDTH / 2, panelY - 12 * SCALE);
 
-            const labelSize = Math.round(20 * SCALE);
-            const numSize = Math.round(36 * SCALE);
+            // Header: Level + Duration
+            const hdrSize = Math.round(14 * SCALE);
+            ctx.font = `bold ${hdrSize}px Arial`;
+            ctx.fillStyle = '#5a4030';
+            ctx.textAlign = 'center';
+            const diffLabel = DIFFICULTY_SETTINGS[difficulty].label;
+            ctx.fillText(`Level ${difficulty} (${diffLabel})  •  Time: ${formatDuration(gameDuration)}`, CANVAS_WIDTH / 2, panelY + 32 * SCALE);
+
+            // Score
+            const labelSize = Math.round(18 * SCALE);
+            const numSize = Math.round(32 * SCALE);
+            let rowY = panelY + 62 * SCALE;
             ctx.font = `bold ${labelSize}px Arial`;
             ctx.fillStyle = '#3e2a1a';
             ctx.textAlign = 'left';
-            ctx.fillText('Score', panelX + 40 * SCALE, panelY + 65 * SCALE);
+            ctx.fillText('Score', panelX + 30 * SCALE, rowY);
             ctx.textAlign = 'right';
             ctx.font = `bold ${numSize}px Arial`;
-            ctx.fillText(score, panelX + panelW - 40 * SCALE, panelY + 75 * SCALE);
+            ctx.fillText(score, panelX + panelW - 30 * SCALE, rowY + 5 * SCALE);
 
+            // Best for this level
+            rowY += 45 * SCALE;
             ctx.font = `bold ${labelSize}px Arial`;
             ctx.textAlign = 'left';
-            ctx.fillText('Best', panelX + 40 * SCALE, panelY + 130 * SCALE);
+            ctx.fillText('Best', panelX + 30 * SCALE, rowY);
             ctx.textAlign = 'right';
             ctx.font = `bold ${numSize}px Arial`;
-            ctx.fillText(bestScore, panelX + panelW - 40 * SCALE, panelY + 140 * SCALE);
-
-            // Medal
-            if (score >= 5) {
-                let medalColor = COLORS.medal_bronze;
-                if (score >= 40) medalColor = COLORS.medal_gold;
-                else if (score >= 20) medalColor = COLORS.medal_silver;
-
-                const medalX = panelX + 65 * SCALE;
-                const medalY = panelY + 155 * SCALE;
-
-                ctx.fillStyle = medalColor;
-                ctx.beginPath();
-                ctx.arc(medalX, medalY, 22 * SCALE, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.strokeStyle = '#3e2a1a';
-                ctx.lineWidth = 2 * SCALE;
-                ctx.stroke();
-
-                ctx.fillStyle = 'rgba(255,255,255,0.3)';
-                ctx.beginPath();
-                ctx.arc(medalX - 6 * SCALE, medalY - 6 * SCALE, 10 * SCALE, 0, Math.PI * 2);
-                ctx.fill();
-
-                const starSize = Math.round(16 * SCALE);
-                ctx.font = `bold ${starSize}px Arial`;
-                ctx.fillStyle = '#3e2a1a';
-                ctx.textAlign = 'center';
-                ctx.fillText('★', medalX, medalY + 6 * SCALE);
-            }
+            ctx.fillText(bestScore, panelX + panelW - 30 * SCALE, rowY + 5 * SCALE);
 
             if (score === bestScore && score > 0) {
-                const newSize = Math.round(14 * SCALE);
-                ctx.font = `bold ${newSize}px Arial`;
+                ctx.font = `bold ${Math.round(13 * SCALE)}px Arial`;
                 ctx.fillStyle = '#c0392b';
                 ctx.textAlign = 'right';
-                ctx.fillText('NEW!', panelX + panelW - 40 * SCALE, panelY + 108 * SCALE);
+                ctx.fillText('NEW!', panelX + panelW - 30 * SCALE, rowY - 18 * SCALE);
             }
 
+            // Divider line
+            rowY += 25 * SCALE;
+            ctx.strokeStyle = 'rgba(62, 42, 26, 0.3)';
+            ctx.lineWidth = 1 * SCALE;
+            ctx.beginPath();
+            ctx.moveTo(panelX + 25 * SCALE, rowY);
+            ctx.lineTo(panelX + panelW - 25 * SCALE, rowY);
+            ctx.stroke();
+
+            // All Best Scores header
+            rowY += 18 * SCALE;
+            ctx.font = `bold ${Math.round(14 * SCALE)}px Arial`;
+            ctx.fillStyle = '#5a4030';
+            ctx.textAlign = 'center';
+            ctx.fillText('— All Best Scores —', CANVAS_WIDTH / 2, rowY);
+
+            // Best scores list
+            const listSize = Math.round(13 * SCALE);
+            const listH = 17 * SCALE;
+            ctx.font = `bold ${listSize}px Arial`;
+            for (let lvl = 5; lvl >= 1; lvl--) {
+                rowY += listH;
+                const lbl = DIFFICULTY_SETTINGS[lvl].label;
+                const sc = bestScores[lvl] || 0;
+                const isCurr = lvl === difficulty;
+                ctx.fillStyle = isCurr ? '#3e2a1a' : '#6b5540';
+                ctx.textAlign = 'left';
+                ctx.fillText(`${lvl}. ${lbl}`, panelX + 35 * SCALE, rowY);
+                ctx.textAlign = 'right';
+                ctx.fillText(sc > 0 ? String(sc) : '-', panelX + panelW - 35 * SCALE, rowY);
+                if (isCurr) {
+                    ctx.fillStyle = 'rgba(62, 42, 26, 0.08)';
+                    ctx.fillRect(panelX + 25 * SCALE, rowY - listH * 0.7, panelW - 50 * SCALE, listH);
+                }
+            }
+
+            // Restart instruction
             const alpha = 0.5 + 0.5 * Math.sin(frameCount * 0.08);
             ctx.globalAlpha = alpha;
             const restartSize = Math.round(20 * SCALE);
@@ -908,8 +1217,8 @@
             ctx.strokeStyle = COLORS.textShadow;
             ctx.lineWidth = 3 * SCALE;
             ctx.textAlign = 'center';
-            ctx.strokeText('Click to Restart', CANVAS_WIDTH / 2, panelY + panelH + 50 * SCALE);
-            ctx.fillText('Click to Restart', CANVAS_WIDTH / 2, panelY + panelH + 50 * SCALE);
+            ctx.strokeText('Click to Restart', CANVAS_WIDTH / 2, panelY + panelH + 40 * SCALE);
+            ctx.fillText('Click to Restart', CANVAS_WIDTH / 2, panelY + panelH + 40 * SCALE);
             ctx.globalAlpha = 1;
 
             ctx.restore();
@@ -924,9 +1233,9 @@
             drawMountains();
             drawDistantTrees();
 
-            // Stalactites/Stalagmites (obstacles)
+            // Tree trunk obstacles
             for (const pipe of pipes) {
-                drawStalactite(pipe.x, pipe.topHeight, pipe.jaggedTop);
+                drawTreeTrunkObstacle(pipe);
             }
 
             drawForegroundTrees();
