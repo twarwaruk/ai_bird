@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Flappy Bird</title>
+    <title>Floppy Jacob</title>
     <style>
         * {
             margin: 0;
@@ -50,14 +50,18 @@
         let GRAVITY, FLAP_STRENGTH, PIPE_WIDTH, PIPE_GAP, PIPE_SPEED;
         let PIPE_SPAWN_INTERVAL, BIRD_SIZE, GROUND_HEIGHT;
 
+        // Landscape elements
+        let trees = [];
+        let distantTrees = [];
+        let treeOffset = 0;
+        let distantTreeOffset = 0;
+
         function resizeCanvas() {
             CANVAS_WIDTH = window.innerWidth;
             CANVAS_HEIGHT = window.innerHeight;
             canvas.width = CANVAS_WIDTH;
             canvas.height = CANVAS_HEIGHT;
 
-            // Scale based on the average of width and height ratios
-            // Use height as primary scale reference for vertical gameplay
             const scaleX = CANVAS_WIDTH / 400;
             const scaleY = CANVAS_HEIGHT / 600;
             SCALE = Math.min(scaleX, scaleY);
@@ -72,46 +76,87 @@
             BIRD_SIZE = 28 * SCALE;
             GROUND_HEIGHT = 100 * SCALE;
 
+            // Regenerate landscape elements
+            initTrees();
+
             // Reposition clouds for new dimensions
             if (clouds && clouds.length > 0) {
                 for (const cloud of clouds) {
                     cloud.width = (60 + Math.random() * 80) * SCALE;
                     cloud.x = Math.random() * CANVAS_WIDTH;
-                    cloud.y = 30 * SCALE + Math.random() * 150 * SCALE;
+                    cloud.y = 20 * SCALE + Math.random() * 100 * SCALE;
                 }
             }
         }
 
+        function initTrees() {
+            // Distant small trees (parallax layer)
+            distantTrees = [];
+            const distantSpacing = 40 * SCALE;
+            for (let x = 0; x < CANVAS_WIDTH + distantSpacing * 2; x += distantSpacing) {
+                distantTrees.push({
+                    x: x,
+                    height: (25 + Math.random() * 35) * SCALE,
+                    width: (12 + Math.random() * 10) * SCALE,
+                });
+            }
+            // Foreground trees
+            trees = [];
+            const spacing = 60 * SCALE;
+            for (let x = 0; x < CANVAS_WIDTH + spacing * 2; x += spacing) {
+                trees.push({
+                    x: x,
+                    height: (50 + Math.random() * 60) * SCALE,
+                    width: (18 + Math.random() * 14) * SCALE,
+                });
+            }
+        }
+
         // Game state
-        let gameState = 'menu'; // 'menu', 'playing', 'gameover'
+        let gameState = 'menu';
         let bird, pipes, score, bestScore, lastPipeSpawn, groundOffset, frameCount;
 
         // Load best score
         bestScore = parseInt(localStorage.getItem('flappyBestScore')) || 0;
 
-        // Colors
+        // Flagstaff Arizona Colors
         const COLORS = {
-            sky: '#70c5ce',
-            skyBottom: '#87CEEB',
-            ground: '#ded895',
-            groundDark: '#c9b458',
-            groundLine: '#5a8a2a',
-            pipeBody: '#73bf2e',
-            pipeBorder: '#4a8c1c',
-            pipeHighlight: '#8ed44a',
-            pipeLip: '#5a9e22',
-            pipeLipBorder: '#3d7014',
-            birdBody: '#f9c74f',
-            birdWing: '#f3a712',
-            birdBeak: '#e76f51',
-            birdEyeWhite: '#ffffff',
-            birdEyePupil: '#2d3436',
-            birdBelly: '#fdd85d',
+            skyTop: '#1a5276',
+            skyMid: '#2e86c1',
+            skyBottom: '#85c1e9',
+            sunGlow: '#f9e79f',
+            mountainFar: '#7d8a96',
+            mountainFarSnow: '#ecf0f1',
+            mountainMid: '#5d6d7e',
+            mountainMidSnow: '#d5dbdb',
+            mountainNear: '#4a5568',
+            hillFar: '#6b7b3a',
+            hillNear: '#556b2f',
+            treeTrunk: '#4a3728',
+            treeDark: '#2d4a1e',
+            treeMid: '#3a5f2a',
+            treeLight: '#4a7a35',
+            treeDistant: '#4a6e3a',
+            ground: '#c4956a',
+            groundDark: '#a0714e',
+            groundRed: '#b5654a',
+            groundLine: '#8b6914',
+            dirtLight: '#d4a574',
+            dirtDark: '#96643a',
+            rockLight: '#8e8e8e',
+            rockMid: '#6b6b6b',
+            rockDark: '#4a4a4a',
+            rockBrown: '#6b5b4a',
+            rockHighlight: '#a0a0a0',
+            stalactiteLight: '#9e9585',
+            stalactiteMid: '#7a7060',
+            stalactiteDark: '#5a5040',
             textWhite: '#ffffff',
             textShadow: '#000000',
             medal_gold: '#ffd700',
             medal_silver: '#c0c0c0',
             medal_bronze: '#cd7f32',
+            birdBody: '#f9c74f',
         };
 
         // Cloud system
@@ -119,13 +164,13 @@
 
         function initClouds() {
             clouds = [];
-            for (let i = 0; i < 8; i++) {
+            for (let i = 0; i < 6; i++) {
                 clouds.push({
                     x: Math.random() * CANVAS_WIDTH,
-                    y: 30 * SCALE + Math.random() * 150 * SCALE,
+                    y: 20 * SCALE + Math.random() * 100 * SCALE,
                     width: (60 + Math.random() * 80) * SCALE,
-                    speed: (0.2 + Math.random() * 0.3) * SCALE,
-                    opacity: 0.4 + Math.random() * 0.3
+                    speed: (0.15 + Math.random() * 0.25) * SCALE,
+                    opacity: 0.3 + Math.random() * 0.3
                 });
             }
         }
@@ -183,10 +228,20 @@
             const minY = 80 * SCALE;
             const maxY = groundY - PIPE_GAP - 60 * SCALE;
             const topHeight = minY + Math.random() * (maxY - minY);
+            // Generate random jagged edges for stalactite/stalagmite
+            const jaggedTop = [];
+            const jaggedBottom = [];
+            const segments = 8;
+            for (let i = 0; i <= segments; i++) {
+                jaggedTop.push((Math.random() - 0.5) * PIPE_WIDTH * 0.4);
+                jaggedBottom.push((Math.random() - 0.5) * PIPE_WIDTH * 0.4);
+            }
             pipes.push({
                 x: CANVAS_WIDTH,
                 topHeight: topHeight,
-                scored: false
+                scored: false,
+                jaggedTop: jaggedTop,
+                jaggedBottom: jaggedBottom
             });
         }
 
@@ -223,13 +278,11 @@
                 for (let i = pipes.length - 1; i >= 0; i--) {
                     pipes[i].x -= PIPE_SPEED;
 
-                    // Score
                     if (!pipes[i].scored && pipes[i].x + PIPE_WIDTH < bird.x) {
                         pipes[i].scored = true;
                         score++;
                     }
 
-                    // Remove off-screen pipes
                     if (pipes[i].x + PIPE_WIDTH < -10) {
                         pipes.splice(i, 1);
                     }
@@ -237,6 +290,9 @@
 
                 // Ground scroll
                 groundOffset = (groundOffset + PIPE_SPEED) % (24 * SCALE);
+                // Tree parallax scrolling
+                treeOffset = (treeOffset + PIPE_SPEED) ;
+                distantTreeOffset = (distantTreeOffset + PIPE_SPEED * 0.3);
 
                 // Collision detection
                 const birdLeft = bird.x - BIRD_SIZE + 4 * SCALE;
@@ -244,14 +300,12 @@
                 const birdTop = bird.y - BIRD_SIZE + 4 * SCALE;
                 const birdBottom = bird.y + BIRD_SIZE - 4 * SCALE;
 
-                // Ground/ceiling collision
                 const groundY = CANVAS_HEIGHT - GROUND_HEIGHT;
                 if (birdBottom > groundY || birdTop < 0) {
                     gameOver();
                     return;
                 }
 
-                // Pipe collision
                 for (const pipe of pipes) {
                     const pipeLeft = pipe.x;
                     const pipeRight = pipe.x + PIPE_WIDTH;
@@ -264,11 +318,12 @@
                     }
                 }
             } else if (gameState === 'menu') {
-                // Floating bird animation on menu
                 bird = bird || { x: CANVAS_WIDTH / 2, y: CANVAS_HEIGHT / 2, velocity: 0, rotation: 0, flapFrame: 0, flapTimer: 0 };
                 bird.y = CANVAS_HEIGHT / 2 - 40 * SCALE + Math.sin(frameCount * 0.05) * 15 * SCALE;
                 bird.x = CANVAS_WIDTH / 2;
                 groundOffset = (groundOffset + 0.5 * SCALE) % (24 * SCALE);
+                treeOffset = (treeOffset + 0.5 * SCALE);
+                distantTreeOffset = (distantTreeOffset + 0.15 * SCALE);
             }
 
             // Update clouds
@@ -276,7 +331,7 @@
                 cloud.x -= cloud.speed;
                 if (cloud.x + cloud.width < 0) {
                     cloud.x = CANVAS_WIDTH + 10;
-                    cloud.y = 30 * SCALE + Math.random() * 150 * SCALE;
+                    cloud.y = 20 * SCALE + Math.random() * 100 * SCALE;
                 }
             }
         }
@@ -290,13 +345,26 @@
             }
         }
 
-        // Drawing functions
+        // ========== DRAWING FUNCTIONS ==========
+
         function drawSky() {
             const groundY = CANVAS_HEIGHT - GROUND_HEIGHT;
             const gradient = ctx.createLinearGradient(0, 0, 0, groundY);
-            gradient.addColorStop(0, COLORS.sky);
-            gradient.addColorStop(1, COLORS.skyBottom);
+            gradient.addColorStop(0, COLORS.skyTop);
+            gradient.addColorStop(0.4, COLORS.skyMid);
+            gradient.addColorStop(0.85, COLORS.skyBottom);
+            gradient.addColorStop(1, '#c9dde8');
             ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, CANVAS_WIDTH, groundY);
+
+            // Subtle sun glow near horizon
+            const sunX = CANVAS_WIDTH * 0.75;
+            const sunY = groundY * 0.55;
+            const sunGrad = ctx.createRadialGradient(sunX, sunY, 0, sunX, sunY, 150 * SCALE);
+            sunGrad.addColorStop(0, 'rgba(249, 231, 159, 0.2)');
+            sunGrad.addColorStop(0.5, 'rgba(249, 231, 159, 0.08)');
+            sunGrad.addColorStop(1, 'rgba(249, 231, 159, 0)');
+            ctx.fillStyle = sunGrad;
             ctx.fillRect(0, 0, CANVAS_WIDTH, groundY);
         }
 
@@ -305,16 +373,163 @@
                 ctx.fillStyle = `rgba(255, 255, 255, ${cloud.opacity})`;
                 ctx.beginPath();
                 const w = cloud.width;
-                const h = w * 0.4;
+                const h = w * 0.35;
                 const cx = cloud.x + w / 2;
                 const cy = cloud.y;
-                // Draw cloud puffs
+                // Use moveTo before each arc to avoid connecting line artifacts
+                ctx.moveTo(cx + h * 0.5, cy);
                 ctx.arc(cx, cy, h * 0.5, 0, Math.PI * 2);
+                ctx.moveTo(cx - w * 0.2 + h * 0.35, cy + h * 0.1);
                 ctx.arc(cx - w * 0.2, cy + h * 0.1, h * 0.35, 0, Math.PI * 2);
+                ctx.moveTo(cx + w * 0.2 + h * 0.4, cy + h * 0.1);
                 ctx.arc(cx + w * 0.2, cy + h * 0.1, h * 0.4, 0, Math.PI * 2);
+                ctx.moveTo(cx - w * 0.1 + h * 0.3, cy - h * 0.1);
                 ctx.arc(cx - w * 0.1, cy - h * 0.1, h * 0.3, 0, Math.PI * 2);
+                ctx.moveTo(cx + w * 0.1 + h * 0.35, cy - h * 0.05);
                 ctx.arc(cx + w * 0.1, cy - h * 0.05, h * 0.35, 0, Math.PI * 2);
                 ctx.fill();
+            }
+        }
+
+        function drawMountains() {
+            const groundY = CANVAS_HEIGHT - GROUND_HEIGHT;
+            const mountainBase = groundY * 0.65;
+
+            // === Far mountain range (San Francisco Peaks) ===
+            ctx.fillStyle = COLORS.mountainFar;
+            ctx.beginPath();
+            ctx.moveTo(0, mountainBase + 40 * SCALE);
+
+            // Main peak cluster
+            const peakCenterX = CANVAS_WIDTH * 0.35;
+            ctx.lineTo(peakCenterX - 280 * SCALE, mountainBase + 40 * SCALE);
+            ctx.lineTo(peakCenterX - 200 * SCALE, mountainBase - 20 * SCALE);
+            ctx.lineTo(peakCenterX - 140 * SCALE, mountainBase - 80 * SCALE);
+            ctx.lineTo(peakCenterX - 80 * SCALE, mountainBase - 120 * SCALE);
+            ctx.lineTo(peakCenterX - 30 * SCALE, mountainBase - 160 * SCALE);
+            // Humphreys Peak (tallest)
+            ctx.lineTo(peakCenterX, mountainBase - 190 * SCALE);
+            ctx.lineTo(peakCenterX + 25 * SCALE, mountainBase - 185 * SCALE);
+            ctx.lineTo(peakCenterX + 60 * SCALE, mountainBase - 170 * SCALE);
+            // Agassiz Peak
+            ctx.lineTo(peakCenterX + 100 * SCALE, mountainBase - 155 * SCALE);
+            ctx.lineTo(peakCenterX + 130 * SCALE, mountainBase - 140 * SCALE);
+            ctx.lineTo(peakCenterX + 170 * SCALE, mountainBase - 100 * SCALE);
+            ctx.lineTo(peakCenterX + 230 * SCALE, mountainBase - 50 * SCALE);
+            ctx.lineTo(peakCenterX + 300 * SCALE, mountainBase + 10 * SCALE);
+            ctx.lineTo(peakCenterX + 380 * SCALE, mountainBase + 40 * SCALE);
+
+            // Right side smaller peaks
+            const rightPeakX = CANVAS_WIDTH * 0.8;
+            ctx.lineTo(rightPeakX - 100 * SCALE, mountainBase + 40 * SCALE);
+            ctx.lineTo(rightPeakX - 50 * SCALE, mountainBase - 30 * SCALE);
+            ctx.lineTo(rightPeakX, mountainBase - 70 * SCALE);
+            ctx.lineTo(rightPeakX + 40 * SCALE, mountainBase - 55 * SCALE);
+            ctx.lineTo(rightPeakX + 100 * SCALE, mountainBase - 20 * SCALE);
+            ctx.lineTo(CANVAS_WIDTH, mountainBase + 30 * SCALE);
+            ctx.lineTo(CANVAS_WIDTH, mountainBase + 60 * SCALE);
+            ctx.lineTo(0, mountainBase + 60 * SCALE);
+            ctx.closePath();
+            ctx.fill();
+
+            // Snow caps on the peaks
+            ctx.fillStyle = COLORS.mountainFarSnow;
+            ctx.globalAlpha = 0.7;
+            ctx.beginPath();
+            ctx.moveTo(peakCenterX - 30 * SCALE, mountainBase - 160 * SCALE);
+            ctx.lineTo(peakCenterX, mountainBase - 190 * SCALE);
+            ctx.lineTo(peakCenterX + 25 * SCALE, mountainBase - 185 * SCALE);
+            ctx.lineTo(peakCenterX + 60 * SCALE, mountainBase - 170 * SCALE);
+            ctx.lineTo(peakCenterX + 40 * SCALE, mountainBase - 150 * SCALE);
+            ctx.lineTo(peakCenterX + 10 * SCALE, mountainBase - 145 * SCALE);
+            ctx.lineTo(peakCenterX - 15 * SCALE, mountainBase - 148 * SCALE);
+            ctx.closePath();
+            ctx.fill();
+
+            // Second snow patch
+            ctx.beginPath();
+            ctx.moveTo(peakCenterX + 85 * SCALE, mountainBase - 155 * SCALE);
+            ctx.lineTo(peakCenterX + 100 * SCALE, mountainBase - 155 * SCALE);
+            ctx.lineTo(peakCenterX + 130 * SCALE, mountainBase - 140 * SCALE);
+            ctx.lineTo(peakCenterX + 115 * SCALE, mountainBase - 130 * SCALE);
+            ctx.lineTo(peakCenterX + 90 * SCALE, mountainBase - 138 * SCALE);
+            ctx.closePath();
+            ctx.fill();
+            ctx.globalAlpha = 1;
+
+            // === Mid-range hills (forested foothills) ===
+            const hillBase = groundY * 0.78;
+            const hillGrad = ctx.createLinearGradient(0, hillBase - 80 * SCALE, 0, hillBase + 20 * SCALE);
+            hillGrad.addColorStop(0, COLORS.hillFar);
+            hillGrad.addColorStop(1, COLORS.hillNear);
+            ctx.fillStyle = hillGrad;
+            ctx.beginPath();
+            ctx.moveTo(0, hillBase + 20 * SCALE);
+            for (let x = 0; x <= CANVAS_WIDTH; x += 30 * SCALE) {
+                const hillHeight = Math.sin(x * 0.003 / SCALE) * 35 * SCALE +
+                                   Math.sin(x * 0.007 / SCALE + 1) * 20 * SCALE +
+                                   Math.sin(x * 0.002 / SCALE + 3) * 25 * SCALE;
+                ctx.lineTo(x, hillBase - hillHeight);
+            }
+            ctx.lineTo(CANVAS_WIDTH, hillBase + 20 * SCALE);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function drawPineTree(x, baseY, height, width, color) {
+            // Trunk
+            ctx.fillStyle = COLORS.treeTrunk;
+            const trunkW = width * 0.15;
+            const trunkH = height * 0.2;
+            ctx.fillRect(x - trunkW / 2, baseY - trunkH, trunkW, trunkH);
+
+            // Ponderosa pine - layered triangles
+            const layers = 4;
+            for (let i = 0; i < layers; i++) {
+                const layerY = baseY - trunkH - (height * 0.8) * (i / layers);
+                const layerWidth = width * (1 - i * 0.15);
+                const layerHeight = height * 0.35;
+
+                ctx.fillStyle = i % 2 === 0 ? color : COLORS.treeDark;
+                ctx.beginPath();
+                ctx.moveTo(x, layerY - layerHeight);
+                ctx.lineTo(x - layerWidth / 2, layerY);
+                ctx.lineTo(x + layerWidth / 2, layerY);
+                ctx.closePath();
+                ctx.fill();
+            }
+        }
+
+        function drawDistantTrees() {
+            const groundY = CANVAS_HEIGHT - GROUND_HEIGHT;
+            const treeBase = groundY * 0.82;
+            const spacing = 40 * SCALE;
+            const totalWidth = distantTrees.length * spacing;
+            const offset = distantTreeOffset % totalWidth;
+
+            ctx.globalAlpha = 0.6;
+            for (const tree of distantTrees) {
+                let tx = tree.x - offset;
+                // Wrap around
+                while (tx < -spacing) tx += totalWidth;
+                while (tx > CANVAS_WIDTH + spacing) tx -= totalWidth;
+                drawPineTree(tx, treeBase, tree.height, tree.width, COLORS.treeDistant);
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        function drawForegroundTrees() {
+            const groundY = CANVAS_HEIGHT - GROUND_HEIGHT;
+            const treeBase = groundY;
+            const spacing = 60 * SCALE;
+            const totalWidth = trees.length * spacing;
+            const offset = treeOffset % totalWidth;
+
+            for (const tree of trees) {
+                let tx = tree.x - offset;
+                while (tx < -spacing) tx += totalWidth;
+                while (tx > CANVAS_WIDTH + spacing) tx -= totalWidth;
+                drawPineTree(tx, treeBase, tree.height, tree.width, COLORS.treeMid);
             }
         }
 
@@ -322,79 +537,184 @@
             const groundY = CANVAS_HEIGHT - GROUND_HEIGHT;
             const stripeWidth = 24 * SCALE;
 
-            // Grass line
+            // Dirt/grass line at top
+            ctx.fillStyle = '#7a8a3a';
+            ctx.fillRect(0, groundY, CANVAS_WIDTH, 3 * SCALE);
             ctx.fillStyle = COLORS.groundLine;
-            ctx.fillRect(0, groundY, CANVAS_WIDTH, 6 * SCALE);
+            ctx.fillRect(0, groundY + 3 * SCALE, CANVAS_WIDTH, 3 * SCALE);
 
-            // Ground
+            // Main ground - Arizona red/brown dirt
             const groundGradient = ctx.createLinearGradient(0, groundY + 6 * SCALE, 0, CANVAS_HEIGHT);
-            groundGradient.addColorStop(0, COLORS.ground);
+            groundGradient.addColorStop(0, COLORS.dirtLight);
+            groundGradient.addColorStop(0.3, COLORS.ground);
+            groundGradient.addColorStop(0.7, COLORS.groundRed);
             groundGradient.addColorStop(1, COLORS.groundDark);
             ctx.fillStyle = groundGradient;
             ctx.fillRect(0, groundY + 6 * SCALE, CANVAS_WIDTH, CANVAS_HEIGHT - groundY - 6 * SCALE);
 
-            // Ground pattern (stripes)
-            ctx.fillStyle = 'rgba(0,0,0,0.05)';
+            // Ground texture - scattered rocks/pebbles pattern
+            ctx.fillStyle = 'rgba(0,0,0,0.06)';
             for (let x = -groundOffset; x < CANVAS_WIDTH; x += stripeWidth) {
-                ctx.fillRect(x, groundY + 6 * SCALE, stripeWidth / 2, CANVAS_HEIGHT - groundY - 6 * SCALE);
+                ctx.fillRect(x, groundY + 6 * SCALE, stripeWidth * 0.4, CANVAS_HEIGHT - groundY - 6 * SCALE);
             }
+
+            // Small rock details
+            ctx.fillStyle = 'rgba(120, 80, 50, 0.15)';
+            for (let x = -groundOffset * 1.5; x < CANVAS_WIDTH; x += 37 * SCALE) {
+                const rockY = groundY + 15 * SCALE + Math.sin(x * 0.1) * 10 * SCALE;
+                ctx.beginPath();
+                ctx.ellipse(x, rockY, 4 * SCALE, 2.5 * SCALE, 0, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // Path/trail through the ground
+            ctx.fillStyle = 'rgba(150, 120, 80, 0.2)';
+            ctx.fillRect(0, groundY + 30 * SCALE, CANVAS_WIDTH, 8 * SCALE);
         }
 
-        function drawPipe(x, topHeight) {
-            const lipHeight = 26 * SCALE;
-            const lipOverhang = 6 * SCALE;
+        function drawStalactite(x, topHeight, jagged) {
             const groundY = CANVAS_HEIGHT - GROUND_HEIGHT;
+            const segments = jagged ? jagged.length - 1 : 8;
 
-            // Top pipe body
-            ctx.fillStyle = COLORS.pipeBody;
-            ctx.fillRect(x, 0, PIPE_WIDTH, topHeight - lipHeight);
+            // ====== TOP STALACTITE (hanging from ceiling) ======
+            // Main body
+            const topGrad = ctx.createLinearGradient(x, 0, x + PIPE_WIDTH, 0);
+            topGrad.addColorStop(0, COLORS.stalactiteDark);
+            topGrad.addColorStop(0.3, COLORS.stalactiteMid);
+            topGrad.addColorStop(0.5, COLORS.stalactiteLight);
+            topGrad.addColorStop(0.7, COLORS.stalactiteMid);
+            topGrad.addColorStop(1, COLORS.stalactiteDark);
 
-            // Top pipe border
-            ctx.fillStyle = COLORS.pipeBorder;
-            ctx.fillRect(x, 0, 3 * SCALE, topHeight - lipHeight);
-            ctx.fillRect(x + PIPE_WIDTH - 3 * SCALE, 0, 3 * SCALE, topHeight - lipHeight);
+            // Draw stalactite body with jagged edges
+            ctx.fillStyle = topGrad;
+            ctx.beginPath();
+            ctx.moveTo(x - 5 * SCALE, 0);
+            ctx.lineTo(x + PIPE_WIDTH + 5 * SCALE, 0);
 
-            // Top pipe highlight
-            ctx.fillStyle = COLORS.pipeHighlight;
-            ctx.fillRect(x + 6 * SCALE, 0, 8 * SCALE, topHeight - lipHeight);
+            // Right jagged edge going down
+            if (jagged) {
+                for (let i = 0; i <= segments; i++) {
+                    const frac = i / segments;
+                    const py = topHeight * frac;
+                    const edgeOffset = jagged[i] * 0.5;
+                    ctx.lineTo(x + PIPE_WIDTH + edgeOffset, py);
+                }
+            }
 
-            // Top pipe lip
-            ctx.fillStyle = COLORS.pipeLip;
-            ctx.fillRect(x - lipOverhang, topHeight - lipHeight, PIPE_WIDTH + lipOverhang * 2, lipHeight);
-            ctx.fillStyle = COLORS.pipeLipBorder;
-            ctx.strokeStyle = COLORS.pipeLipBorder;
+            // Pointed tip
+            ctx.lineTo(x + PIPE_WIDTH * 0.55, topHeight);
+            ctx.lineTo(x + PIPE_WIDTH * 0.45, topHeight - 3 * SCALE);
+            ctx.lineTo(x + PIPE_WIDTH * 0.35, topHeight + 5 * SCALE);
+
+            // Left jagged edge going up
+            if (jagged) {
+                for (let i = segments; i >= 0; i--) {
+                    const frac = i / segments;
+                    const py = topHeight * frac;
+                    const edgeOffset = jagged[i] * 0.5;
+                    ctx.lineTo(x + edgeOffset, py);
+                }
+            }
+
+            ctx.closePath();
+            ctx.fill();
+
+            // Stalactite details - drip lines
+            ctx.strokeStyle = 'rgba(90, 80, 64, 0.3)';
+            ctx.lineWidth = 1 * SCALE;
+            for (let i = 0; i < 3; i++) {
+                const lx = x + PIPE_WIDTH * (0.25 + i * 0.25);
+                ctx.beginPath();
+                ctx.moveTo(lx, 0);
+                ctx.lineTo(lx + (Math.random() - 0.5) * 3 * SCALE, topHeight * 0.7);
+                ctx.stroke();
+            }
+
+            // Highlight edge
+            ctx.strokeStyle = 'rgba(180, 170, 150, 0.3)';
             ctx.lineWidth = 2 * SCALE;
-            ctx.strokeRect(x - lipOverhang, topHeight - lipHeight, PIPE_WIDTH + lipOverhang * 2, lipHeight);
+            ctx.beginPath();
+            ctx.moveTo(x + PIPE_WIDTH * 0.35, 0);
+            ctx.lineTo(x + PIPE_WIDTH * 0.4, topHeight * 0.6);
+            ctx.stroke();
 
-            // Top lip highlight
-            ctx.fillStyle = COLORS.pipeHighlight;
-            ctx.fillRect(x - lipOverhang + 4 * SCALE, topHeight - lipHeight + 3 * SCALE, 8 * SCALE, lipHeight - 6 * SCALE);
+            // Small drip at tip
+            ctx.fillStyle = 'rgba(140, 180, 200, 0.4)';
+            ctx.beginPath();
+            ctx.ellipse(x + PIPE_WIDTH * 0.45, topHeight + 3 * SCALE, 2 * SCALE, 3 * SCALE, 0, 0, Math.PI * 2);
+            ctx.fill();
 
-            // Bottom pipe
+            // ====== BOTTOM STALAGMITE (rising from ground) ======
             const bottomY = topHeight + PIPE_GAP;
+            const stalagHeight = groundY - bottomY;
 
-            // Bottom pipe lip
-            ctx.fillStyle = COLORS.pipeLip;
-            ctx.fillRect(x - lipOverhang, bottomY, PIPE_WIDTH + lipOverhang * 2, lipHeight);
-            ctx.fillStyle = COLORS.pipeLipBorder;
-            ctx.strokeRect(x - lipOverhang, bottomY, PIPE_WIDTH + lipOverhang * 2, lipHeight);
+            const botGrad = ctx.createLinearGradient(x, 0, x + PIPE_WIDTH, 0);
+            botGrad.addColorStop(0, COLORS.stalactiteDark);
+            botGrad.addColorStop(0.3, COLORS.stalactiteMid);
+            botGrad.addColorStop(0.5, COLORS.stalactiteLight);
+            botGrad.addColorStop(0.7, COLORS.stalactiteMid);
+            botGrad.addColorStop(1, COLORS.stalactiteDark);
 
-            // Bottom lip highlight
-            ctx.fillStyle = COLORS.pipeHighlight;
-            ctx.fillRect(x - lipOverhang + 4 * SCALE, bottomY + 3 * SCALE, 8 * SCALE, lipHeight - 6 * SCALE);
+            ctx.fillStyle = botGrad;
+            ctx.beginPath();
 
-            // Bottom pipe body
-            ctx.fillStyle = COLORS.pipeBody;
-            ctx.fillRect(x, bottomY + lipHeight, PIPE_WIDTH, groundY - bottomY - lipHeight);
+            // Pointed tip at top
+            const jaggedBot = jagged || [];
+            ctx.moveTo(x + PIPE_WIDTH * 0.4, bottomY - 5 * SCALE);
+            ctx.lineTo(x + PIPE_WIDTH * 0.5, bottomY);
+            ctx.lineTo(x + PIPE_WIDTH * 0.6, bottomY - 3 * SCALE);
 
-            // Bottom pipe border
-            ctx.fillStyle = COLORS.pipeBorder;
-            ctx.fillRect(x, bottomY + lipHeight, 3 * SCALE, groundY - bottomY - lipHeight);
-            ctx.fillRect(x + PIPE_WIDTH - 3 * SCALE, bottomY + lipHeight, 3 * SCALE, groundY - bottomY - lipHeight);
+            // Right jagged edge going down
+            for (let i = 0; i <= segments; i++) {
+                const frac = i / segments;
+                const py = bottomY + stalagHeight * frac;
+                const edgeOffset = (jaggedBot[i] || 0) * 0.5;
+                ctx.lineTo(x + PIPE_WIDTH + edgeOffset, py);
+            }
 
-            // Bottom pipe highlight
-            ctx.fillStyle = COLORS.pipeHighlight;
-            ctx.fillRect(x + 6 * SCALE, bottomY + lipHeight, 8 * SCALE, groundY - bottomY - lipHeight);
+            ctx.lineTo(x + PIPE_WIDTH + 5 * SCALE, groundY);
+            ctx.lineTo(x - 5 * SCALE, groundY);
+
+            // Left jagged edge going up
+            for (let i = segments; i >= 0; i--) {
+                const frac = i / segments;
+                const py = bottomY + stalagHeight * frac;
+                const edgeOffset = (jaggedBot[i] || 0) * 0.5;
+                ctx.lineTo(x + edgeOffset, py);
+            }
+
+            ctx.closePath();
+            ctx.fill();
+
+            // Stalagmite details - mineral streaks
+            ctx.strokeStyle = 'rgba(90, 80, 64, 0.3)';
+            ctx.lineWidth = 1 * SCALE;
+            for (let i = 0; i < 3; i++) {
+                const lx = x + PIPE_WIDTH * (0.25 + i * 0.25);
+                ctx.beginPath();
+                ctx.moveTo(lx + (Math.random() - 0.5) * 3 * SCALE, bottomY + stalagHeight * 0.2);
+                ctx.lineTo(lx, groundY);
+                ctx.stroke();
+            }
+
+            // Highlight edge
+            ctx.strokeStyle = 'rgba(180, 170, 150, 0.3)';
+            ctx.lineWidth = 2 * SCALE;
+            ctx.beginPath();
+            ctx.moveTo(x + PIPE_WIDTH * 0.35, bottomY + stalagHeight * 0.3);
+            ctx.lineTo(x + PIPE_WIDTH * 0.35, groundY);
+            ctx.stroke();
+
+            // Small rocks at base
+            ctx.fillStyle = COLORS.rockBrown;
+            ctx.globalAlpha = 0.4;
+            ctx.beginPath();
+            ctx.ellipse(x - 3 * SCALE, groundY - 2 * SCALE, 6 * SCALE, 3 * SCALE, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.beginPath();
+            ctx.ellipse(x + PIPE_WIDTH + 2 * SCALE, groundY - 1 * SCALE, 5 * SCALE, 2.5 * SCALE, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 1;
         }
 
         function drawBird(x, y, rotation, flapFrame) {
@@ -402,80 +722,19 @@
             ctx.translate(x, y);
             ctx.rotate(rotation * Math.PI / 180);
 
-            // The original bird height is BIRD_SIZE * 2 (diameter of the ellipse)
-            // Scale the Jacob image to match that height
             const targetHeight = BIRD_SIZE * 2;
 
             if (jacobImgLoaded) {
-                // Calculate width to maintain aspect ratio, matching the bird's height
                 const aspectRatio = jacobImg.naturalWidth / jacobImg.naturalHeight;
                 const drawHeight = targetHeight;
                 const drawWidth = drawHeight * aspectRatio;
-
-                // Draw image centered on (0, 0)
                 ctx.drawImage(jacobImg, -drawWidth / 2, -drawHeight / 2, drawWidth, drawHeight);
             } else {
-                // Fallback circle if image hasn't loaded yet
                 ctx.fillStyle = COLORS.birdBody;
                 ctx.beginPath();
                 ctx.arc(0, 0, BIRD_SIZE, 0, Math.PI * 2);
                 ctx.fill();
             }
-
-            ctx.restore();
-        }
-            ctx.fill();
-
-            // Wing
-            ctx.fillStyle = COLORS.birdWing;
-            const wingY = flapFrame ? -8 * SCALE : 4 * SCALE;
-            ctx.beginPath();
-            ctx.ellipse(-6 * SCALE, wingY, s * 0.5, s * 0.35, -0.2, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#c8860a';
-            ctx.lineWidth = 1 * SCALE;
-            ctx.stroke();
-
-            // Eye white
-            ctx.fillStyle = COLORS.birdEyeWhite;
-            ctx.beginPath();
-            ctx.arc(12 * SCALE, -6 * SCALE, 9 * SCALE, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#555';
-            ctx.lineWidth = 1 * SCALE;
-            ctx.stroke();
-
-            // Eye pupil
-            ctx.fillStyle = COLORS.birdEyePupil;
-            ctx.beginPath();
-            ctx.arc(14 * SCALE, -5 * SCALE, 4.5 * SCALE, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Eye highlight
-            ctx.fillStyle = '#ffffff';
-            ctx.beginPath();
-            ctx.arc(15.5 * SCALE, -7 * SCALE, 2 * SCALE, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Beak
-            ctx.fillStyle = COLORS.birdBeak;
-            ctx.beginPath();
-            ctx.moveTo(18 * SCALE, 0);
-            ctx.lineTo(32 * SCALE, 2 * SCALE);
-            ctx.lineTo(18 * SCALE, 8 * SCALE);
-            ctx.closePath();
-            ctx.fill();
-            ctx.strokeStyle = '#c0533a';
-            ctx.lineWidth = 1 * SCALE;
-            ctx.stroke();
-
-            // Beak line
-            ctx.strokeStyle = '#c0533a';
-            ctx.lineWidth = 1.5 * SCALE;
-            ctx.beginPath();
-            ctx.moveTo(18 * SCALE, 3 * SCALE);
-            ctx.lineTo(30 * SCALE, 3 * SCALE);
-            ctx.stroke();
 
             ctx.restore();
         }
@@ -498,7 +757,6 @@
         function drawMenu() {
             ctx.save();
 
-            // Title
             const titleSize = Math.round(50 * SCALE);
             ctx.font = `bold ${titleSize}px Arial`;
             ctx.textAlign = 'center';
@@ -507,15 +765,16 @@
             ctx.fillStyle = COLORS.textWhite;
 
             const titleY = CANVAS_HEIGHT * 0.23;
-            ctx.strokeText('Flappy', CANVAS_WIDTH / 2, titleY);
-            ctx.fillText('Flappy', CANVAS_WIDTH / 2, titleY);
-            ctx.strokeText('Bird', CANVAS_WIDTH / 2, titleY + 55 * SCALE);
-            ctx.fillText('Bird', CANVAS_WIDTH / 2, titleY + 55 * SCALE);
+            ctx.strokeText('Floppy', CANVAS_WIDTH / 2, titleY);
+            ctx.fillText('Floppy', CANVAS_WIDTH / 2, titleY);
+            ctx.strokeText('Jacob', CANVAS_WIDTH / 2, titleY + 55 * SCALE);
+            ctx.fillText('Jacob', CANVAS_WIDTH / 2, titleY + 55 * SCALE);
 
             // Title color overlay
-            ctx.fillStyle = '#f9c74f';
-            ctx.fillText('Flappy', CANVAS_WIDTH / 2, titleY);
-            ctx.fillText('Bird', CANVAS_WIDTH / 2, titleY + 55 * SCALE);
+            ctx.fillStyle = '#e8a838';
+            ctx.fillText('Floppy', CANVAS_WIDTH / 2, titleY);
+            ctx.fillStyle = '#cd7f32';
+            ctx.fillText('Jacob', CANVAS_WIDTH / 2, titleY + 55 * SCALE);
 
             // Instruction
             const alpha = 0.5 + 0.5 * Math.sin(frameCount * 0.08);
@@ -529,7 +788,6 @@
             ctx.fillText('Click or Press Space', CANVAS_WIDTH / 2, CANVAS_HEIGHT / 2 + 80 * SCALE);
             ctx.globalAlpha = 1;
 
-            // Best score
             if (bestScore > 0) {
                 const bestSize = Math.round(18 * SCALE);
                 ctx.font = `bold ${bestSize}px Arial`;
@@ -548,11 +806,9 @@
 
             const groundY = CANVAS_HEIGHT - GROUND_HEIGHT;
 
-            // Darken overlay
             ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
             ctx.fillRect(0, 0, CANVAS_WIDTH, groundY);
 
-            // Score panel background
             const panelW = 320 * SCALE;
             const panelH = 220 * SCALE;
             const panelX = (CANVAS_WIDTH - panelW) / 2;
@@ -564,19 +820,18 @@
             ctx.roundRect(panelX + 4 * SCALE, panelY + 4 * SCALE, panelW, panelH, 12 * SCALE);
             ctx.fill();
 
-            // Panel bg
-            ctx.fillStyle = '#deb662';
+            // Panel bg - earthy tones
+            ctx.fillStyle = '#b5886a';
             ctx.beginPath();
             ctx.roundRect(panelX, panelY, panelW, panelH, 12 * SCALE);
             ctx.fill();
 
-            // Panel inner
-            ctx.fillStyle = '#c8960a';
+            ctx.fillStyle = '#8b6548';
             ctx.beginPath();
             ctx.roundRect(panelX + 8 * SCALE, panelY + 8 * SCALE, panelW - 16 * SCALE, panelH - 16 * SCALE, 8 * SCALE);
             ctx.fill();
 
-            ctx.fillStyle = '#e8c96a';
+            ctx.fillStyle = '#c9a07a';
             ctx.beginPath();
             ctx.roundRect(panelX + 12 * SCALE, panelY + 12 * SCALE, panelW - 24 * SCALE, panelH - 24 * SCALE, 6 * SCALE);
             ctx.fill();
@@ -587,22 +842,20 @@
             ctx.textAlign = 'center';
             ctx.lineWidth = 4 * SCALE;
             ctx.strokeStyle = COLORS.textShadow;
-            ctx.fillStyle = '#e74c3c';
+            ctx.fillStyle = '#c0392b';
             ctx.strokeText('Game Over', CANVAS_WIDTH / 2, panelY - 15 * SCALE);
             ctx.fillText('Game Over', CANVAS_WIDTH / 2, panelY - 15 * SCALE);
 
-            // Score
             const labelSize = Math.round(20 * SCALE);
             const numSize = Math.round(36 * SCALE);
             ctx.font = `bold ${labelSize}px Arial`;
-            ctx.fillStyle = '#5a4520';
+            ctx.fillStyle = '#3e2a1a';
             ctx.textAlign = 'left';
             ctx.fillText('Score', panelX + 40 * SCALE, panelY + 65 * SCALE);
             ctx.textAlign = 'right';
             ctx.font = `bold ${numSize}px Arial`;
             ctx.fillText(score, panelX + panelW - 40 * SCALE, panelY + 75 * SCALE);
 
-            // Best
             ctx.font = `bold ${labelSize}px Arial`;
             ctx.textAlign = 'left';
             ctx.fillText('Best', panelX + 40 * SCALE, panelY + 130 * SCALE);
@@ -623,7 +876,7 @@
                 ctx.beginPath();
                 ctx.arc(medalX, medalY, 22 * SCALE, 0, Math.PI * 2);
                 ctx.fill();
-                ctx.strokeStyle = '#5a4520';
+                ctx.strokeStyle = '#3e2a1a';
                 ctx.lineWidth = 2 * SCALE;
                 ctx.stroke();
 
@@ -634,21 +887,19 @@
 
                 const starSize = Math.round(16 * SCALE);
                 ctx.font = `bold ${starSize}px Arial`;
-                ctx.fillStyle = '#5a4520';
+                ctx.fillStyle = '#3e2a1a';
                 ctx.textAlign = 'center';
                 ctx.fillText('★', medalX, medalY + 6 * SCALE);
             }
 
-            // New best indicator
             if (score === bestScore && score > 0) {
                 const newSize = Math.round(14 * SCALE);
                 ctx.font = `bold ${newSize}px Arial`;
-                ctx.fillStyle = '#e74c3c';
+                ctx.fillStyle = '#c0392b';
                 ctx.textAlign = 'right';
                 ctx.fillText('NEW!', panelX + panelW - 40 * SCALE, panelY + 108 * SCALE);
             }
 
-            // Restart instruction
             const alpha = 0.5 + 0.5 * Math.sin(frameCount * 0.08);
             ctx.globalAlpha = alpha;
             const restartSize = Math.round(20 * SCALE);
@@ -665,21 +916,20 @@
         }
 
         function draw() {
-            // Clear
             ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
 
-            // Sky
+            // Layered Flagstaff landscape
             drawSky();
-
-            // Clouds
             drawClouds();
+            drawMountains();
+            drawDistantTrees();
 
-            // Pipes
+            // Stalactites/Stalagmites (obstacles)
             for (const pipe of pipes) {
-                drawPipe(pipe.x, pipe.topHeight);
+                drawStalactite(pipe.x, pipe.topHeight, pipe.jaggedTop);
             }
 
-            // Ground
+            drawForegroundTrees();
             drawGround();
 
             // Bird
@@ -687,10 +937,8 @@
                 drawBird(bird.x, bird.y, bird.rotation || 0, bird.flapFrame || 0);
             }
 
-            // Score
             drawScore();
 
-            // Menu/Game Over overlay
             if (gameState === 'menu') {
                 drawMenu();
             } else if (gameState === 'gameover') {
@@ -712,6 +960,7 @@
         // Initialize
         resizeCanvas();
         initClouds();
+        initTrees();
         resetGame();
         bird.x = CANVAS_WIDTH / 2;
         gameLoop();
